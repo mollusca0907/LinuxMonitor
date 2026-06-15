@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MJRassberry Monitoring</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap');
+        body { font-family: 'JetBrains+Mono', monospace; }
+        .critical { animation: pulse 1s infinite; border-color: #ef4444 !important; }
+        @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); } 70% { box-shadow: 0 0 0 10px rgba(239, 68, 68, 0); } 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); } }
+    </style>
+</head>
+<body class="bg-[#0f172a] text-slate-200 min-h-screen p-4 md:p-8">
+
+    <div class="max-w-5xl mx-auto">
+        <header class="flex justify-between items-center mb-8">
+            <div>
+                <h1 class="text-3xl font-bold text-white tracking-tight">MJRassberry <span class="text-emerald-500 text-sm">Live</span></h1>
+                <p class="text-slate-500 text-xs mt-1 underline">root@MJRassberry:/LinuxMonitor</p>
+            </div>
+            <div id="connection-badge" class="px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/50 text-emerald-500 text-xs font-bold italic">CONNECTED</div>
+        </header>
+
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+            <div class="bg-slate-800/50 p-6 rounded-2xl border border-slate-700">
+                <span class="text-slate-400 font-bold text-xs uppercase tracking-widest">CPU Usage</span>
+                <div class="flex items-baseline space-x-2 mt-2">
+                    <span id="cpu-val" class="text-5xl font-bold text-white">0</span><span class="text-emerald-500 font-bold">%</span>
+                </div>
+            </div>
+            <div class="bg-slate-800/50 p-6 rounded-2xl border border-slate-700">
+                <span class="text-slate-400 font-bold text-xs uppercase tracking-widest">RAM Usage</span>
+                <div class="flex items-baseline space-x-2 mt-2">
+                    <span id="mem-val" class="text-5xl font-bold text-white">0</span><span class="text-sky-500 font-bold">%</span>
+                </div>
+            </div>
+            <div id="temp-card" class="bg-slate-800/50 p-6 rounded-2xl border border-slate-700 transition-all duration-300">
+                <span class="text-slate-400 font-bold text-xs uppercase tracking-widest">Temperature</span>
+                <div class="flex items-baseline space-x-2 mt-2">
+                    <span id="temp-val" class="text-5xl font-bold text-white">0</span><span class="text-orange-500 font-bold">°C</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <div class="lg:col-span-2 bg-slate-800/30 p-6 rounded-2xl border border-slate-700 h-[400px] relative">
+                <h3 class="text-xs font-bold text-slate-500 mb-4 uppercase tracking-widest text-center">Performance Timeline</h3>
+                <div class="absolute inset-0 p-6 pt-12">
+                    <canvas id="mainChart"></canvas>
+                </div>
+            </div>
+
+            <div class="bg-slate-800/30 p-6 rounded-2xl border border-slate-700 h-[400px] overflow-hidden">
+                <h3 class="text-xs font-bold text-slate-500 mb-6 uppercase tracking-widest text-center">Top Processes</h3>
+                <div id="proc-list" class="space-y-4">
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const socket = io();
+        let chart;
+
+        function initChart() {
+            const ctx = document.getElementById('mainChart').getContext('2d');
+            chart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [
+                        { label: 'CPU', data: [], borderColor: '#10b981', backgroundColor: 'rgba(16, 185, 129, 0.1)', fill: true, tension: 0.4, pointRadius: 0 },
+                        { label: 'RAM', data: [], borderColor: '#0ea5e9', backgroundColor: 'rgba(14, 165, 233, 0.1)', fill: true, tension: 0.4, pointRadius: 0 },
+                        { label: 'Temp', data: [], borderColor: '#fb923c', tension: 0.4, pointRadius: 0 }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    animation: false,
+                    scales: {
+                        y: { min: 0, max: 100, grid: { color: 'rgba(255,255,255,0.05)' } },
+                        x: { display: false }
+                    },
+                    plugins: { legend: { display: false } }
+                }
+            });
+        }
+
+        window.onload = initChart;
+
+        socket.on('stats', (data) => {
+            if (!chart) return;
+
+            document.getElementById('cpu-val').innerText = Math.round(data.cpu);
+            document.getElementById('mem-val').innerText = Math.round(data.mem);
+            document.getElementById('temp-val').innerText = data.temp;
+
+            const tempCard = document.getElementById('temp-card');
+            if (data.temp > 75) {
+                tempCard.classList.add('critical');
+            } else {
+                tempCard.classList.remove('critical');
+            }
+
+            const procList = document.getElementById('proc-list');
+            procList.innerHTML = data.procs.map(p => `
+                <div class="flex justify-between items-center bg-slate-900/50 p-3 rounded-lg border border-slate-700/50">
+                    <span class="text-xs font-bold text-slate-300 truncate w-24">${p.name}</span>
+                    <div class="flex items-center space-x-2">
+                        <div class="w-16 bg-slate-700 h-1 rounded-full">
+                            <div class="bg-emerald-500 h-full" style="width: ${Math.min(p.cpu, 100)}%"></div>
+                        </div>
+                        <span class="text-[10px] font-mono text-emerald-400">${Math.round(p.cpu)}%</span>
+                    </div>
+                </div>
+            `).join('');
+
+            const now = new Date().toLocaleTimeString();
+            chart.data.labels.push(now);
+            chart.data.datasets[0].data.push(data.cpu);
+            chart.data.datasets[1].data.push(data.mem);
+            chart.data.datasets[2].data.push(data.temp);
+
+            if (chart.data.labels.length > 20) {
+                chart.data.labels.shift();
+                chart.data.datasets.forEach(d => d.data.shift());
+            }
+            chart.update('none');
+        });
+
+        socket.on('disconnect', () => {
+            const badge = document.getElementById('connection-badge');
+            badge.innerText = "DISCONNECTED";
+            badge.classList.replace('text-emerald-500', 'text-red-500');
+        });
+    </script>
+</body>
+</html>
